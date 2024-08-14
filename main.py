@@ -39,6 +39,7 @@ class Menu(db.Model):
     date: Mapped[Date] = mapped_column(Date, nullable=False)
     items: Mapped[dict] = mapped_column(JSON, nullable=False)
     restaurant_id: Mapped[int] = mapped_column(Integer, ForeignKey('restaurant.id'), nullable=False)
+    votes = relationship('Vote', backref='menu', lazy=True)
 
 
 class Vote(db.Model):
@@ -66,14 +67,14 @@ def register():
 
     registered_user = db.session.execute(db.select(Employee).where(Employee.username == new_user.username)).scalar()
     if registered_user:
-        return jsonify({'Failed': 'You`ve already sighed up with that email, log in instead!'})
+        return jsonify({'message': 'You`ve already sighed up with that email, log in instead!'}), 409
 
     db.session.add(new_user)
     db.session.commit()
 
     login_user(new_user)
 
-    return jsonify({"Success": "You have successfully registered."})
+    return jsonify({'message': 'You have successfully registered.'})
 
 
 @app.route('/login', methods=['POST'])
@@ -83,12 +84,12 @@ def login():
     employee = db.session.execute(db.select(Employee).where(Employee.username == username)).scalar()
 
     if not employee:
-        return jsonify({"Not Found": "Sorry employee with this username was not found in the database."}), 404
+        return jsonify({'Not Found': 'Sorry employee with this username was not found in the database.'}), 404
     elif not check_password_hash(pwhash=employee.password, password=password):
-        return jsonify({"Password incorrect": "Sorry but you enter the wrong password, please try again."}), 401
+        return jsonify({'message': 'Sorry but you enter the wrong password, please try again.'}), 401
     else:
         login_user(employee)
-        return jsonify({"Success": "You have successfully logged in."})
+        return jsonify({'message': 'You have successfully logged in.'})
 
 
 @app.route('/add_restaurant', methods=['POST'])
@@ -100,7 +101,7 @@ def add_restaurant():
     db.session.add(new_restaurant)
     db.session.commit()
 
-    return jsonify({"message": "Restaurant created successfully"}), 201
+    return jsonify({'message': 'Restaurant created successfully'}), 201
 
 
 @app.route('/restaurants/<int:restaurant_id>/menu', methods=['POST'])
@@ -113,7 +114,7 @@ def upload_menu(restaurant_id):
     db.session.add(menu)
     db.session.commit()
 
-    return jsonify({"message": "Menu uploaded successfully"}), 201
+    return jsonify({'message': 'Menu uploaded successfully'}), 201
 
 
 @app.route('/menu', methods=['GET'])
@@ -122,10 +123,18 @@ def get_current_menu():
     today = dt.date.today()
     menus = db.session.execute(db.select(Menu).where(Menu.date == today)).scalars().all()
 
-    if not menus:
-        return jsonify({"message": "No menu found for today"}), 404
+    app_version = request.headers.get('X-App-Version', '1.0')
+    if app_version == '1.0':
+        pass
+    elif app_version == '2.0':
+        pass
+    else:
+        return jsonify({'message': 'Unsupported app version'}), 400
 
-    return jsonify([{"restaurant": record.restaurant.name, "restaurant_id": record.restaurant.id, "menu_id": record.id, "items": record.items} for record in menus]), 200
+    if not menus:
+        return jsonify({'message': 'No menu found for today'}), 404
+
+    return jsonify([{'restaurant': record.restaurant.name, 'restaurant_id': record.restaurant.id, 'menu_id': record.id, 'items': record.items} for record in menus]), 200
 
 
 @app.route('/menu/<int:menu_id>/vote', methods=['POST'])
@@ -133,36 +142,48 @@ def get_current_menu():
 def vote_for_menu(menu_id):
     employee_id = current_user.id
 
-    app_version = request.headers.get('X-App-Version', '1.0')
-
     menu = db.session.execute(db.select(Menu).where(Menu.id == menu_id)).scalar()
 
     if not menu:
-        return jsonify({"message": "Menu not found"}), 404
+        return jsonify({'message': 'Menu not found'}), 404
 
-    # Перевірка, чи працівник вже голосував за це меню
     existing_vote = db.session.execute(db.select(Vote).where(Vote.employee_id == employee_id, Vote.menu_id == menu_id)).scalar()
 
     if existing_vote:
-        return jsonify({"message": "You have already voted for this menu"}), 400
+        return jsonify({'message': 'You have already voted for this menu'}), 400
 
-    # Обробка голосування залежно від версії додатку
+    app_version = request.headers.get('X-App-Version', '1.0')
     if app_version == '1.0':
-        # Логіка для старої версії додатку
         pass
     elif app_version == '2.0':
-        # Логіка для нової версії додатку
         pass
     else:
-        return jsonify({"message": "Unsupported app version"}), 400
+        return jsonify({'message': 'Unsupported app version'}), 400
 
-    # Створення нового голосу
     vote = Vote(employee_id=employee_id, menu_id=menu_id)
     db.session.add(vote)
     db.session.commit()
 
-    return jsonify({"message": "Vote recorded successfully"}), 201
+    return jsonify({'message': 'Vote recorded successfully'}), 201
 
 
-if __name__ == "__main__":
+@app.route('/results', methods=['GET'])
+@login_required
+def get_results():
+    today = dt.date.today()
+    menus = db.session.execute(db.select(Menu).where(Menu.date == today)).scalars().all()
+    results = [{'restaurant': menu.restaurant.name, 'menu_items': menu.items, 'vote_count': len(menu.votes)} for menu in menus]
+
+    app_version = request.headers.get('X-App-Version', '1.0')
+    if app_version == '1.0':
+        pass
+    elif app_version == '2.0':
+        pass
+    else:
+        return jsonify({'message': 'Unsupported app version'}), 400
+
+    return jsonify(results), 200
+
+
+if __name__ == '__main__':
     app.run(debug=True)
